@@ -5,6 +5,7 @@ import com.Ecom.SpringEcom.models.Product;
 import com.Ecom.SpringEcom.services.ProductService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -19,39 +20,37 @@ import java.util.ListResourceBundle;
 public class ProductController {
     @Autowired
     private ProductService productService;
+
+
+
     @GetMapping("/products")
     public ResponseEntity<List<Product>>getProducts()
     {
         return new ResponseEntity<>(productService.getAllproducts(), HttpStatus.OK) ;
     }
 
+
+
+
+
+
     @GetMapping("/product/{id}")
-    public ResponseEntity<Product> getProductById(@PathVariable int id){
-
-        Product product = productService.getProductById(id);
-
-        if(product != null)
-            return new ResponseEntity<>(product,HttpStatus.OK);
-        else
-            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+    public ResponseEntity<Product> getProductById(@PathVariable int id) {
+        return ResponseEntity.ok(productService.getProductById(id));
     }
 
-    @GetMapping("product/{productId}/image")
-    public ResponseEntity<byte[]>getImageByProductId(@PathVariable int productId){
+    @GetMapping("/product/{productId}/image")
+    public ResponseEntity<byte[]> getImageByProductId(@PathVariable int productId) {
         Product product = productService.getProductById(productId);
-        return new ResponseEntity<>(product.getImageData(),HttpStatus.OK);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(product.getImageType()))
+                .body(product.getImageData());
     }
 
     @PostMapping("/product")
-    public ResponseEntity<?>addProduct(@RequestPart Product product,@RequestPart MultipartFile imageFile){
-        Product saveProduct = null;
-        try {
-            saveProduct= productService.addProduct(product,imageFile);
-            return new ResponseEntity<>(saveProduct,HttpStatus.CREATED);
-        }
-        catch (IOException e) {
-           return new ResponseEntity<>(e.getMessage(),HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+    public ResponseEntity<Product> addProduct(@RequestPart Product product,
+                                              @RequestPart MultipartFile imageFile) throws IOException {
+        return new ResponseEntity<>(productService.addProduct(product, imageFile), HttpStatus.CREATED);
     }
 
     @PutMapping("/product/{id}")
@@ -66,15 +65,10 @@ public class ProductController {
 
     }
 
-    @DeleteMapping("product/{id}")
-    public ResponseEntity<String>deleteProduct(@PathVariable int id){
-        Product product = productService.getProductById(id);
-        if(product != null){
-            productService.deleteProduct(id);
-            return new ResponseEntity<>("Deleted",HttpStatus.OK);
-        }
-        else
-            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+    @DeleteMapping("/product/{id}")
+    public ResponseEntity<String> deleteProduct(@PathVariable int id) {
+        productService.deleteProduct(id);
+        return ResponseEntity.ok("Deleted");
     }
 
     @GetMapping("/product/search")

@@ -1,5 +1,6 @@
 package com.Ecom.SpringEcom.services;
 
+import com.Ecom.SpringEcom.exceptions.ResourceNotFoundException;
 import com.Ecom.SpringEcom.models.Product;
 import com.Ecom.SpringEcom.repository.ProductRepo;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,10 +18,10 @@ public class ProductService {
         return productrepository.findAll();
     }
 
-    public Product getProductById(int id){
-        return productrepository.findById(id).get();
+    public Product getProductById(int id)  {
+        return productrepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Product not found with id: " + id));
     }
-
     public Product addProduct(Product product , MultipartFile image) throws IOException {
 
         product.setImageName(image.getOriginalFilename());
@@ -30,7 +31,10 @@ public class ProductService {
     }
 
 
-    public void deleteProduct(int id) {
+    public void deleteProduct(int id)  {
+        if (!productrepository.existsById(id)) {
+            throw new ResourceNotFoundException("Product not found with id: " + id);
+        }
         productrepository.deleteById(id);
     }
 

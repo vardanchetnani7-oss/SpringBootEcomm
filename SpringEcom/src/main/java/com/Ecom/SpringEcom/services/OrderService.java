@@ -1,5 +1,7 @@
 package com.Ecom.SpringEcom.services;
 
+import com.Ecom.SpringEcom.exceptions.InsufficientStockException;
+import com.Ecom.SpringEcom.exceptions.ResourceNotFoundException;
 import com.Ecom.SpringEcom.models.Order;
 import com.Ecom.SpringEcom.models.OrderItem;
 import com.Ecom.SpringEcom.models.Product;
@@ -9,6 +11,8 @@ import com.Ecom.SpringEcom.models.dtos.OrderRequest;
 import com.Ecom.SpringEcom.models.dtos.OrderResponse;
 import com.Ecom.SpringEcom.repository.OrderRepo;
 import com.Ecom.SpringEcom.repository.ProductRepo;
+import jakarta.transaction.Transactional;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -18,11 +22,13 @@ import java.util.List;
 import java.util.UUID;
 
 @Service
+@RequiredArgsConstructor
 public class OrderService {
 
-    private OrderRepo orderRepo;
-    private ProductRepo productRepo;
+    private final OrderRepo orderRepo;
+    private final ProductRepo productRepo;
 
+    @Transactional
     public OrderResponse placeOrder(OrderRequest request) {
 
        Order order  = new Order();
@@ -36,7 +42,12 @@ public class OrderService {
         List<OrderItem> orderItems = new ArrayList<>();
         for(OrderItemRequest orderItemRequest : request.items()) {
             Product product = productRepo.findById(orderItemRequest.productId())
-                    .orElseThrow(() -> new RuntimeException("Product Not Found"));
+                    .orElseThrow(() -> new ResourceNotFoundException("Product Not Found"+ orderItemRequest.productId()));
+
+            if (product.getStockQuantity() < orderItemRequest.quantity()) {
+                throw new InsufficientStockException(
+                        "Insufficient stock for product: " + product.getName());
+            }
             product.setStockQuantity(product.getStockQuantity() - orderItemRequest.quantity());
             productRepo.save(product);
 
