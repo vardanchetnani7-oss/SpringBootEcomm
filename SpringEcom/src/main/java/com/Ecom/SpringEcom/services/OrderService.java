@@ -13,6 +13,7 @@ import com.Ecom.SpringEcom.repository.OrderRepo;
 import com.Ecom.SpringEcom.repository.ProductRepo;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -29,6 +30,7 @@ public class OrderService {
     private final ProductRepo productRepo;
 
     @Transactional
+    @CacheEvict(value = "products", allEntries = true)
     public OrderResponse placeOrder(OrderRequest request) {
 
        Order order  = new Order();

@@ -1,10 +1,11 @@
 # Spring Ecom
 
-A REST API for a simple e-commerce backend built with Spring Boot. It manages products (with images) and customer orders, secured with HTTP Basic authentication and a centralized global exception handler.
+A REST API for a simple e-commerce backend built with Spring Boot. It manages products (with images) and customer orders, secured with HTTP Basic authentication, a centralized global exception handler and Redis caching for product reads.
 
 ## Features
 
 - Product management: create, read, update, delete and search, with image upload and download
+- Redis caching of product reads (list, by id and search), with automatic eviction on writes
 - Order placement with automatic stock deduction
 - Transactional order flow: if any item in an order fails, all stock changes roll back
 - Global exception handling with one consistent JSON error format
@@ -13,7 +14,8 @@ A REST API for a simple e-commerce backend built with Spring Boot. It manages pr
 ## Tech Stack
 
 - Java
-- Spring Boot (Web, Data JPA, Security)
+- Spring Boot (Web, Data JPA, Security, Cache, Data Redis)
+- Redis
 - Lombok
 - Maven
 - Any JPA-supported relational database (configure it in `application.properties`)
@@ -23,7 +25,7 @@ A REST API for a simple e-commerce backend built with Spring Boot. It manages pr
 ```
 com.Ecom.SpringEcom
 ├── Controller        ProductController, OrderController
-├── services          ProductService, OrderService
+├── services          ProductService (caching), OrderService (cache eviction)
 ├── repository        ProductRepo, OrderRepo
 ├── models            Product, Order, OrderItem
 │   └── dtos          OrderRequest, OrderResponse, OrderItemRequest, OrderItemResponse
@@ -32,6 +34,8 @@ com.Ecom.SpringEcom
 └── config            SecurityConfig
 ```
 
+`@EnableCaching` is added on the main application class. No separate cache configuration class is needed.
+
 ## Getting Started
 
 ### Prerequisites
@@ -39,10 +43,34 @@ com.Ecom.SpringEcom
 - JDK 17 or later
 - Maven
 - A running database (MySQL, PostgreSQL, H2, etc.)
+- A running Redis server (see below)
+
+### Start Redis
+
+The easiest way is Docker:
+
+```bash
+docker run -d --name redis -p 6379:6379 redis
+```
+
+### Dependencies
+
+Add these to `pom.xml`:
+
+```xml
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter-data-redis</artifactId>
+</dependency>
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter-cache</artifactId>
+</dependency>
+```
 
 ### Configuration
 
-Add your database settings to `src/main/resources/application.properties`. Example for MySQL:
+Add your database and Redis settings to `src/main/resources/application.properties`. Example for PostgreSQL:
 
 ```properties
 spring.datasource.url=jdbc:postgresql://localhost:5432/SpringEcom
@@ -50,6 +78,13 @@ spring.datasource.username=your_username
 spring.datasource.password=your_password
 spring.jpa.hibernate.ddl-auto=update
 spring.jpa.show-sql=true
+
+# Redis cache
+spring.data.redis.host=localhost
+spring.data.redis.port=6379
+spring.cache.type=redis
+spring.cache.redis.time-to-live=10m
+spring.cache.redis.cache-null-values=false
 ```
 
 ### Run
@@ -77,10 +112,10 @@ These users are stored in memory for development only. Change them or load users
 
 | Method | Endpoint | Description | Access |
 |---|---|---|---|
-| GET | `/api/products` | List all products | Public |
-| GET | `/api/product/{id}` | Get a product by id | Public |
+| GET | `/api/products` | List all products (cached) | Public |
+| GET | `/api/product/{id}` | Get a product by id (cached) | Public |
 | GET | `/api/product/{id}/image` | Get a product image | Public |
-| GET | `/api/product/search?keyword=` | Search by name, description, brand or category | Public |
+| GET | `/api/product/search?keyword=` | Search by name, description, brand or category (cached) | Public |
 | POST | `/api/product` | Add a product (multipart: `product` JSON + `imageFile`) | ADMIN |
 | PUT | `/api/product/{id}` | Update a product (multipart) | ADMIN |
 | DELETE | `/api/product/{id}` | Delete a product | ADMIN |
@@ -107,6 +142,45 @@ These users are stored in memory for development only. Change them or load users
 
 - `product`: JSON (content type `application/json`), for example `{ "name": "iPhone 15", "brand": "Apple", "category": "Mobile", "price": 79999.00, "stockQuantity": 10 }`
 - `imageFile`: the image file
+
+## Caching with Redis
+
+Product reads are cached in Redis using Spring's cache abstraction (`@Cacheable` and `@CacheEvict` on `ProductService`). Controllers and the global exception handler are unchanged.
+
+### What is cached
+
+| Method | Cache | Key |
+|---|---|---|
+| `getAllproducts()` | `products` | `all` |
+| `getProductById(id)` | `products` | the product id |
+| `searchProducts(keyword)` | `productSearch` | the lowercase keyword |
+
+All entries expire after the TTL set by `spring.cache.redis.time-to-live` (10 minutes by default). Null values are not cached, and if a method throws (for example `ResourceNotFoundException`), nothing is cached.
+
+### When the cache is cleared
+
+- Adding, updating or deleting a product clears the `products` and `productSearch` caches.
+- Placing an order clears the `products` and `productSearch` caches, because stock quantities change. It happens only after the order method succeeds, so a rolled-back order leaves the cache untouched.
+
+### Stock checks always use the database
+
+`OrderService.placeOrder` reads products through `ProductRepo` inside the transaction and never through the cached `ProductService` methods. A cached stock value could be stale and cause overselling, so the order flow always uses the database as the source of truth. Product listings may show slightly stale stock until the next eviction or TTL expiry.
+
+### Seeing the cache work
+
+1. Call `GET /api/product/1` twice. With `spring.jpa.show-sql=true`, the first call prints a SQL `select` and the second prints nothing because it came from Redis.
+2. Inspect Redis:
+   ```bash
+   docker exec -it redis redis-cli
+   KEYS *
+   TTL products::1
+   ```
+3. Update or delete a product, or place an order, then call `GET /api/products` again. A SQL query appears again, which shows the eviction worked.
+
+### Things to know
+
+- Caching works through a Spring proxy, so it applies only when another class calls the service methods. A call from one method to another inside `ProductService` skips the cache.
+- `Product` carries its image bytes (`imageData`), so cached products and the cached product list include them. This is fine for a learning project, but with many large images the cache entries get big.
 
 ## Global Exception Handling
 
@@ -140,18 +214,8 @@ All exceptions are handled in one place by `GlobalExceptionHandler`, a class ann
 
 `OrderService.placeOrder` is annotated with `@Transactional`. For each item it:
 
-1. Finds the product, or throws `ResourceNotFoundException`
+1. Finds the product in the database, or throws `ResourceNotFoundException`
 2. Checks stock, or throws `InsufficientStockException`
 3. Reduces the stock and builds the order item
 
-If any item fails, the transaction rolls back, so earlier items in the same order don't keep their stock changes.
-
-## Possible Improvements
-
-- Request validation with `@Valid` and `spring-boot-starter-validation`
-- Users stored in the database with BCrypt-hashed passwords
-- Handlers for 404 (unknown route), 405 and 415 responses
-- A proper logger (SLF4J) in place of `printStackTrace()`
-- Optimistic locking (`@Version`) on `Product` to prevent overselling under concurrent orders
-- Pagination for products and orders
-- Unit tests for the service layer
+If any item fails, the transaction rolls back, so earlier items in the same order don't keep their stock changes. When the order succeeds, the product caches are cleared so listings show the new stock.
