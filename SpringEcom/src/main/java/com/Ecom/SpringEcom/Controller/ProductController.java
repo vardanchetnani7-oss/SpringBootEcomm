@@ -21,18 +21,11 @@ public class ProductController {
     @Autowired
     private ProductService productService;
 
-
-
     @GetMapping("/products")
     public ResponseEntity<List<Product>>getProducts()
     {
         return new ResponseEntity<>(productService.getAllproducts(), HttpStatus.OK) ;
     }
-
-
-
-
-
 
     @GetMapping("/product/{id}")
     public ResponseEntity<Product> getProductById(@PathVariable int id) {
@@ -62,9 +55,7 @@ public class ProductController {
         } catch (IOException e) {
             return new ResponseEntity<>(e.getMessage(),HttpStatus.BAD_REQUEST);
         }
-
     }
-
     @DeleteMapping("/product/{id}")
     public ResponseEntity<String> deleteProduct(@PathVariable int id) {
         productService.deleteProduct(id);
